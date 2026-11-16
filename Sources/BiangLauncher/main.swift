@@ -61,7 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return nil
             }
             if event.keyCode == 53 && !model.isChoosingFile && model.errorMessage == nil {
-                hide()
+                if model.dragSource != nil { model.clearDrag() }
+                else if model.openFolder != nil { model.closeFolder() }
+                else { hide() }
                 return nil
             }
             return event
@@ -115,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var desiredHeight: CGFloat {
         if model.managing { return 620 }
-        let count = model.preferences.selectedPaths.count
+        let count = model.launcherItems.count
         let base: CGFloat = count == 0 ? 540 : min(620, 310 + CGFloat((count + 5) / 6) * 140)
         return min(700, base + (model.editingOrder ? 24 : 0) + (model.recordingShortcut ? 76 : 0))
     }

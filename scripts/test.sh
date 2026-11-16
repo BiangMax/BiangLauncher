@@ -12,3 +12,14 @@ swiftc -swift-version 5 -D STANDALONE_TESTS \
     Tests/LauncherCoreTests/LauncherPreferencesTests.swift \
     scripts/TestRunner.swift -o .build/CoreTests
 .build/CoreTests
+
+# Compile the actual model against an isolated core module for interaction checks.
+TEST_BUILD_DIR="$PROJECT_DIR/.build/InteractionTests"
+mkdir -p "$TEST_BUILD_DIR"
+swiftc -swift-version 5 -parse-as-library -emit-module -emit-object -module-name LauncherCore \
+    Sources/LauncherCore/LauncherPreferences.swift \
+    -emit-module-path "$TEST_BUILD_DIR/LauncherCore.swiftmodule" -o "$TEST_BUILD_DIR/LauncherCore.o"
+swiftc -swift-version 5 -parse-as-library -I "$TEST_BUILD_DIR" \
+    "$TEST_BUILD_DIR/LauncherCore.o" Sources/BiangLauncher/AppCatalog.swift \
+    Sources/BiangLauncher/LauncherModel.swift scripts/DragTestRunner.swift -o "$TEST_BUILD_DIR/DragTests"
+"$TEST_BUILD_DIR/DragTests"

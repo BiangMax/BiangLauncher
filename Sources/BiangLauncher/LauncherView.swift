@@ -1,4 +1,5 @@
 import AppKit
+import LauncherCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -41,6 +42,8 @@ struct LauncherView: View {
         }
         .preferredColorScheme(.dark)
         .tint(accent)
+        .onChange(of: model.query) { model.clearDrag() }
+        .onChange(of: model.editingOrder) { model.clearDrag() }
         .onChange(of: model.focusRequest) { searchFocused = true }
         .onChange(of: model.recordingShortcut) { if model.recordingShortcut { searchFocused = false } }
         .alert("需要留意", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
@@ -87,16 +90,20 @@ struct LauncherView: View {
 
     private var titleRow: some View {
         HStack(alignment: .center) {
+            if model.openFolder != nil && !model.managing {
+                Button { model.closeFolder() } label: { Image(systemName: "chevron.left").font(.system(size: 18)) }
+                    .buttonStyle(QuietButtonStyle()).accessibilityLabel("返回启动台")
+            }
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(model.managing ? "选择应用" : "启动台")
+                    Text(model.managing ? "选择应用" : (model.openFolder?.name ?? "启动台")).lineLimit(1)
                         .font(.system(size: 27, weight: .semibold))
-                    Text(String(model.managing ? model.apps.count : model.selectedApps.count))
+                    Text(String(model.managing ? model.apps.count : (model.openFolder?.paths.count ?? model.selectedApps.count)))
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(accent).padding(.horizontal, 8).padding(.vertical, 4)
                         .background(accent.opacity(0.09), in: Capsule())
                 }
-                Text(model.managing ? "勾选你需要的应用，其余留在这里。" : "你的应用，刚刚好。")
+                Text(model.managing ? "勾选你需要的应用，其余留在这里。" : (model.openFolder != nil ? "点击启动，右键可将应用移出文件夹。" : "你的应用，刚刚好。"))
                     .font(.system(size: 12)).foregroundStyle(muted)
             }
             Spacer()
@@ -172,8 +179,11 @@ struct LauncherView: View {
             GeometryReader { viewport in
                 ScrollView {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), alignment: .leading, spacing: 16) {
-                        ForEach(model.visibleApps) { app in
-                            AppTile(app: app, model: model)
+                        ForEach(model.launcherItems) { item in
+                            switch item {
+                            case .app(let app): AppTile(app: app, model: model)
+                            case .folder(let folder): FolderTile(folder: folder, model: model)
+                            }
                         }
                     }
                     .padding(.vertical, 6)
@@ -182,9 +192,9 @@ struct LauncherView: View {
                 // Keep the preview and gesture outside the scrolling/lazy content.
                 // The source tile may leave the viewport during a long drag.
                 .overlay(alignment: .topLeading) {
-                    if let source = model.dragSource, let app = model.apps.first(where: { $0.path == source }) {
-                        Image(nsImage: AppIcons.shared.image(for: app))
-                            .resizable().frame(width: 64, height: 64)
+                    if let source = model.dragSource, let item = model.launcherItems.first(where: { $0.id == source }) {
+                        LauncherItemIcon(item: item, model: model)
+                            .frame(width: 64, height: 64)
                             .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
                             .position(model.dragLocation)
                             .allowsHitTesting(false)
@@ -244,7 +254,7 @@ struct LauncherView: View {
             } else {
                 Image(systemName: model.editingOrder ? "hand.draw" : "circle.fill")
                     .font(.system(size: model.editingOrder ? 12 : 5)).foregroundStyle(accent.opacity(0.8))
-                Text(model.editingOrder ? "拖动图标调整顺序，也可使用左右按钮" : "拖动排序 · 点击启动")
+                Text(model.folderReady ? "松开以创建或加入文件夹" : (model.dragSource != nil && model.openFolder == nil && model.query.isEmpty ? "悬停图标 1 秒可归入文件夹" : (model.openFolder != nil ? "拖动排序 · 右键移出文件夹" : (model.editingOrder ? "拖动排序 · 悬停 1 秒归入文件夹" : "拖动排序 · 悬停 1 秒建文件夹"))))
                     .font(.system(size: 11)).foregroundStyle(muted)
                 Spacer()
                 Button { model.recordingShortcut.toggle() } label: {
@@ -277,7 +287,7 @@ private struct AppTile: View {
                         .resizable().interpolation(.high).frame(width: 62, height: 62)
                         .shadow(color: .black.opacity(0.22), radius: 8, y: 5)
                         .opacity(model.dragSource == app.path ? 0.25 : app.isAvailable ? 1 : 0.4)
-                    Text(app.name).font(.system(size: 11, weight: .medium)).lineLimit(2)
+                    Text(targeted && model.folderReady ? "松开以创建文件夹" : app.name).font(.system(size: 11, weight: .medium)).lineLimit(2)
                         .multilineTextAlignment(.center).frame(height: 30, alignment: .top)
                 }.frame(maxWidth: .infinity).padding(.top, 15).padding(.horizontal, 4).padding(.bottom, 5)
                 .contentShape(Rectangle())
@@ -287,9 +297,9 @@ private struct AppTile: View {
             if model.editingOrder {
                 HStack(spacing: 14) {
                     Button { model.move(app, by: -1) } label: { Image(systemName: "chevron.left") }
-                        .accessibilityLabel("将 \(app.name) 前移").disabled(model.preferences.selectedPaths.first == app.path)
+                        .accessibilityLabel("将 \(app.name) 前移").disabled(!model.canMove(app.path, by: -1))
                     Button { model.move(app, by: 1) } label: { Image(systemName: "chevron.right") }
-                        .accessibilityLabel("将 \(app.name) 后移").disabled(model.preferences.selectedPaths.last == app.path)
+                        .accessibilityLabel("将 \(app.name) 后移").disabled(!model.canMove(app.path, by: 1))
                 }.font(.system(size: 10, weight: .semibold)).buttonStyle(.plain).foregroundStyle(accent).padding(.bottom, 10)
             }
         }
@@ -305,12 +315,88 @@ private struct AppTile: View {
             Button("打开") { model.launch(app) }.disabled(!app.isAvailable)
             Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([app.url]) }
             Divider()
-            Button("向前移动") { model.move(app, by: -1) }.disabled(model.preferences.selectedPaths.first == app.path)
-            Button("向后移动") { model.move(app, by: 1) }.disabled(model.preferences.selectedPaths.last == app.path)
+            Button("向前移动") { model.move(app, by: -1) }.disabled(!model.canMove(app.path, by: -1))
+            Button("向后移动") { model.move(app, by: 1) }.disabled(!model.canMove(app.path, by: 1))
             Divider()
+            if model.preferences.folders.contains(where: { $0.paths.contains(app.path) }) {
+                Button("移出文件夹") { model.removeFromFolder(app) }
+            }
             Button("从启动台隐藏") { model.toggle(app) }
         }
         .help(app.isAvailable ? app.name : "应用已移动或卸载，请重新选择")
+    }
+}
+
+private struct LauncherItemIcon: View {
+    let item: LauncherItem
+    @ObservedObject var model: LauncherModel
+    var body: some View {
+        switch item {
+        case .app(let app):
+            Image(nsImage: AppIcons.shared.image(for: app)).resizable().interpolation(.high)
+        case .folder(let folder):
+            ZStack {
+                RoundedRectangle(cornerRadius: 15).fill(.white.opacity(0.10))
+                RoundedRectangle(cornerRadius: 15).strokeBorder(accent.opacity(0.25))
+                LazyVGrid(columns: [GridItem(.fixed(22), spacing: 3), GridItem(.fixed(22), spacing: 3)], spacing: 3) {
+                    ForEach(Array(model.folderApps(folder).prefix(4))) { app in
+                        Image(nsImage: AppIcons.shared.image(for: app)).resizable().frame(width: 22, height: 22)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct FolderTile: View {
+    let folder: LauncherFolder
+    @ObservedObject var model: LauncherModel
+    @ViewState private var hovered = false
+    private var targeted: Bool { model.dragTarget == folder.id && model.dragSource != folder.id }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button { if !model.editingOrder { model.openFolder(folder) } } label: {
+                VStack(spacing: 10) {
+                    LauncherItemIcon(item: .folder(folder), model: model)
+                        .frame(width: 62, height: 62)
+                        .opacity(model.dragSource == folder.id ? 0.25 : 1)
+                        .scaleEffect(targeted && model.folderReady ? 1.08 : 1)
+                    Text(targeted && model.folderReady ? "松开以加入文件夹" : folder.name)
+                        .font(.system(size: 11, weight: .medium)).lineLimit(2)
+                        .multilineTextAlignment(.center).frame(height: 30, alignment: .top)
+                }
+                .frame(maxWidth: .infinity).padding(.top, 15).padding(.horizontal, 4).padding(.bottom, 5)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).accessibilityLabel("打开文件夹 \(folder.name)，\(folder.paths.count) 个应用")
+            if model.editingOrder {
+                HStack(spacing: 14) {
+                    Button { model.moveItem(folder.id, by: -1) } label: { Image(systemName: "chevron.left") }
+                        .disabled(!model.canMove(folder.id, by: -1)).accessibilityLabel("前移文件夹")
+                    Button { model.moveItem(folder.id, by: 1) } label: { Image(systemName: "chevron.right") }
+                        .disabled(!model.canMove(folder.id, by: 1)).accessibilityLabel("后移文件夹")
+                }.font(.system(size: 10, weight: .semibold)).buttonStyle(.plain).foregroundStyle(accent).padding(.bottom, 10)
+            }
+        }
+        .background((targeted ? accent.opacity(0.15) : hovered ? .white.opacity(0.055) : .clear), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(targeted ? accent.opacity(0.65) : .clear))
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: TileFramesKey.self, value: [folder.id: geometry.frame(in: .named("appViewport"))])
+            }
+        }
+        .onHover { hovered = $0 }
+        .contextMenu {
+            Button("打开文件夹") { model.openFolder(folder) }
+            Button("重命名…") { model.promptToRenameFolder(folder.id) }
+            Divider()
+            Button("向前移动") { model.moveItem(folder.id, by: -1) }.disabled(!model.canMove(folder.id, by: -1))
+            Button("向后移动") { model.moveItem(folder.id, by: 1) }.disabled(!model.canMove(folder.id, by: 1))
+            Divider()
+            Button("解散文件夹（保留应用）") { model.dissolveFolder(folder.id) }
+        }
+        .help("\(folder.name) · \(folder.paths.count) 个应用")
     }
 }
 

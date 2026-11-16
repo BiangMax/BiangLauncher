@@ -2,6 +2,17 @@ import AppKit
 import Combine
 import LauncherCore
 
+enum LauncherItem: Identifiable {
+    case app(InstalledApp)
+    case folder(LauncherFolder)
+    var id: String {
+        switch self {
+        case .app(let app): return app.path
+        case .folder(let folder): return folder.id
+        }
+    }
+}
+
 @MainActor
 final class LauncherModel: ObservableObject {
     @Published var apps: [InstalledApp] = []
@@ -17,6 +28,10 @@ final class LauncherModel: ObservableObject {
     @Published var dragSource: String?
     @Published var dragTarget: String?
     @Published var dragLocation = CGPoint.zero
+    @Published var openFolderID: String?
+    @Published private(set) var folderReady = false
+    private var folderHover = FolderHover()
+    private var folderHoverTask: Task<Void, Never>?
     private var tileFrames: [String: CGRect] = [:]
     private var dragViewport = CGRect.zero
     var dismiss: (() -> Void)?
@@ -25,14 +40,16 @@ final class LauncherModel: ObservableObject {
     var isChoosingFile = false
     private var canSave = true
     private let file: PreferencesFile
+    private let clock: () -> TimeInterval
 
-    init() {
+    init(file: PreferencesFile? = nil, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        file = PreferencesFile(url: base.appendingPathComponent("StudioBiangMax/BiangLauncher/preferences.json"))
-        do { preferences = try file.load() }
+        self.file = file ?? PreferencesFile(url: base.appendingPathComponent("StudioBiangMax/BiangLauncher/preferences.json"))
+        self.clock = clock
+        do { preferences = try self.file.load() }
         catch {
             canSave = false
-            errorMessage = "无法读取已有配置，原文件已保留。请检查 \(file.url.path) 后重新启动。\n\(error.localizedDescription)"
+            errorMessage = "无法读取已有配置，原文件已保留。请检查 \(self.file.url.path) 后重新启动。\n\(error.localizedDescription)"
         }
     }
 
@@ -40,8 +57,23 @@ final class LauncherModel: ObservableObject {
         let lookup = Dictionary(uniqueKeysWithValues: apps.map { ($0.path, $0) })
         return preferences.selectedPaths.compactMap { lookup[$0] }
     }
+    var openFolder: LauncherFolder? { preferences.folders.first { $0.id == openFolderID } }
+    var launcherItems: [LauncherItem] {
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || openFolder != nil {
+            return visibleApps.map { .app($0) }
+        }
+        let lookup = Dictionary(uniqueKeysWithValues: selectedApps.map { ($0.path, $0) })
+        return preferences.itemOrder.compactMap { id in
+            if let folder = preferences.folders.first(where: { $0.id == id }) { return .folder(folder) }
+            return lookup[id].map { .app($0) }
+        }
+    }
+    func folderApps(_ folder: LauncherFolder) -> [InstalledApp] {
+        let lookup = Dictionary(uniqueKeysWithValues: selectedApps.map { ($0.path, $0) })
+        return folder.paths.compactMap { lookup[$0] }
+    }
     var visibleApps: [InstalledApp] {
-        let source = managing ? (selectedOnly ? selectedApps : apps) : selectedApps
+        let source = managing ? (selectedOnly ? selectedApps : apps) : (openFolder.map { folderApps($0) } ?? selectedApps)
         let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !search.isEmpty else { return source }
         return source.filter { $0.name.localizedStandardContains(search) || $0.url.deletingPathExtension().lastPathComponent.localizedStandardContains(search) }
@@ -62,6 +94,7 @@ final class LauncherModel: ObservableObject {
 
     func setManaging(_ value: Bool) {
         clearDrag()
+        openFolderID = nil
         managing = value
         editingOrder = false
         query = ""
@@ -71,7 +104,9 @@ final class LauncherModel: ObservableObject {
     }
 
     func toggle(_ app: InstalledApp) {
+        clearDrag()
         preferences.setSelected(app.path, selected: !isSelected(app))
+        reconcileFolder()
         save()
     }
 
@@ -81,10 +116,13 @@ final class LauncherModel: ObservableObject {
     }
 
     func updateTileFrames(_ frames: [String: CGRect], viewportSize: CGSize) {
+        if let target = folderHover.target, tileFrames[target] != frames[target] {
+            resetFolderHover()
+        }
         tileFrames = frames
         dragViewport = CGRect(origin: .zero, size: viewportSize)
         // Scrolling changes the tiles under a stationary pointer too.
-        if dragSource != nil { dragTarget = dragHit(at: dragLocation) }
+        if dragSource != nil { updateDragTarget() }
     }
 
     func dragHit(at location: CGPoint) -> String? {
@@ -95,25 +133,126 @@ final class LauncherModel: ObservableObject {
     func updateDrag(source: String, location: CGPoint) {
         dragSource = source
         dragLocation = location
-        dragTarget = dragHit(at: location)
+        updateDragTarget()
+    }
+
+    private func updateDragTarget() {
+        dragTarget = dragHit(at: dragLocation)
+        var candidate: String?
+        if openFolder == nil, query.isEmpty, let source = dragSource,
+           preferences.selectedPaths.contains(source), let target = dragTarget, target != source,
+           let frame = tileFrames[target], frame.insetBy(dx: frame.width * 0.2, dy: 10).contains(dragLocation) {
+            candidate = target
+        }
+        let now = clock()
+        if candidate != folderHover.target {
+            resetFolderHover()
+            folderHover.update(target: candidate, at: now)
+            if let candidate {
+                folderHoverTask = Task { [weak self] in
+                    do { try await Task.sleep(nanoseconds: UInt64(FolderHover.delay * 1_000_000_000)) } catch { return }
+                    guard let self, self.folderHover.target == candidate, self.dragSource != nil else { return }
+                    self.folderReady = self.folderHover.isReady(at: self.clock())
+                }
+            }
+        }
+        folderReady = folderHover.isReady(at: now)
+    }
+
+    private func resetFolderHover() {
+        folderHoverTask?.cancel()
+        folderHoverTask = nil
+        folderHover = FolderHover()
+        folderReady = false
     }
 
     func finishDrag(source: String, location: CGPoint) {
-        if let target = dragHit(at: location) {
-            move(source, to: target)
+        updateDrag(source: source, location: location)
+        if let target = dragTarget {
+            if folderHover.target == target, folderHover.isReady(at: clock()) {
+                if preferences.folders.contains(where: { $0.id == target }) {
+                    preferences.addToFolder(source, folderID: target)
+                } else {
+                    preferences.createFolder(source: source, target: target)
+                }
+                save()
+            } else {
+                move(source, to: target)
+            }
         }
         clearDrag()
     }
 
     func clearDrag() {
+        resetFolderHover()
         dragSource = nil
         dragTarget = nil
     }
 
-    func move(_ app: InstalledApp, by distance: Int) {
-        preferences.move(app.path, by: distance)
+    func openFolder(_ folder: LauncherFolder) {
+        clearDrag()
+        tileFrames = [:]
+        query = ""
+        openFolderID = folder.id
+    }
+
+    func closeFolder() {
+        clearDrag()
+        tileFrames = [:]
+        query = ""
+        openFolderID = nil
+    }
+
+    func removeFromFolder(_ app: InstalledApp) {
+        clearDrag()
+        preferences.removeFromFolder(app.path)
+        reconcileFolder()
         save()
     }
+
+    func dissolveFolder(_ id: String) {
+        clearDrag()
+        preferences.dissolveFolder(id)
+        reconcileFolder()
+        save()
+    }
+
+    private func reconcileFolder() {
+        if openFolderID != nil && openFolder == nil { closeFolder() }
+    }
+
+    func promptToRenameFolder(_ id: String) {
+        guard let folder = preferences.folders.first(where: { $0.id == id }) else { return }
+        clearDrag()
+        let alert = NSAlert()
+        alert.messageText = "重命名文件夹"
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        let field = NSTextField(string: folder.name)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        isChoosingFile = true
+        defer { isChoosingFile = false }
+        if alert.runModal() == .alertFirstButtonReturn {
+            preferences.renameFolder(id, name: field.stringValue)
+            save()
+        }
+    }
+
+    func canMove(_ id: String, by distance: Int) -> Bool {
+        let scope = preferences.folders.first(where: { $0.paths.contains(id) })?.paths ?? preferences.itemOrder
+        guard let index = scope.firstIndex(of: id) else { return false }
+        return scope.indices.contains(index + distance)
+    }
+
+    func moveItem(_ id: String, by distance: Int) {
+        clearDrag()
+        preferences.move(id, by: distance)
+        save()
+    }
+
+    func move(_ app: InstalledApp, by distance: Int) { moveItem(app.path, by: distance) }
 
     func setShortcut(_ shortcut: KeyboardShortcut?) {
         recordingShortcut = false

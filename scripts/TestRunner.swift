@@ -40,7 +40,13 @@ struct CoreTestRunner {
             ("Drag reorder in both directions", suite.testDragInBothDirectionsPreservesOtherApps),
             ("Accessible reorder boundaries", suite.testAccessibleReorderClampsAtEdges),
             ("Persistence round trip", suite.testPersistedOrderSelectionAndShortcutRoundTrip),
-            ("Corrupt preferences preserve error", suite.testCorruptFileIsReportedInsteadOfSilentlyReset)
+            ("Corrupt preferences preserve error", suite.testCorruptFileIsReportedInsteadOfSilentlyReset),
+            ("Legacy preferences migration", suite.testOldPreferencesMigrateWithoutChangingSelectionOrShortcut),
+            ("Folder creation, addition and persistence", suite.testFolderCreationAdditionAndPersistence),
+            ("Folder removal and dissolution", suite.testFolderRemovalAndDissolveKeepAllRemainingApps),
+            ("Independent folder and child ordering", suite.testFolderAndChildOrderingAreIndependent),
+            ("Folder membership normalization", suite.testFolderNormalizationRemovesStaleAndDuplicateMembership),
+            ("One-second continuous folder dwell", suite.testFolderHoverRequiresOneContinuousSecondOnSameTarget)
         ]
         for (name, run) in cases {
             let before = failures
