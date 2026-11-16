@@ -25,6 +25,7 @@ final class LauncherModel: ObservableObject {
     @Published var recordingShortcut = false
     @Published var errorMessage: String?
     @Published var focusRequest = UUID()
+    @Published var launcherVisible = true
     @Published var dragSource: String?
     @Published var dragTarget: String?
     @Published var dragLocation = CGPoint.zero

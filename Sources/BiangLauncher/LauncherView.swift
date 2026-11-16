@@ -12,6 +12,7 @@ private typealias ViewState<Value> = SwiftUI.State<Value>
 struct LauncherView: View {
     @ObservedObject var model: LauncherModel
     @FocusState private var searchFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,6 +41,9 @@ struct LauncherView: View {
                 .strokeBorder(LinearGradient(colors: [.white.opacity(0.23), .white.opacity(0.06), accent.opacity(0.13)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
                 .allowsHitTesting(false)
         }
+        .scaleEffect(model.launcherVisible || reduceMotion ? 1 : 0.96)
+        .animation(.easeOut(duration: model.launcherVisible ? 0.22 : 0.16), value: model.launcherVisible)
+        .allowsHitTesting(model.launcherVisible)
         .preferredColorScheme(.dark)
         .tint(accent)
         .onChange(of: model.query) { model.clearDrag() }
@@ -178,7 +182,7 @@ struct LauncherView: View {
         } else {
             GeometryReader { viewport in
                 ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), alignment: .leading, spacing: 16) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 7), alignment: .leading, spacing: 10) {
                         ForEach(model.launcherItems) { item in
                             switch item {
                             case .app(let app): AppTile(app: app, model: model)
@@ -194,7 +198,7 @@ struct LauncherView: View {
                 .overlay(alignment: .topLeading) {
                     if let source = model.dragSource, let item = model.launcherItems.first(where: { $0.id == source }) {
                         LauncherItemIcon(item: item, model: model)
-                            .frame(width: 64, height: 64)
+                            .frame(width: 76, height: 76)
                             .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
                             .position(model.dragLocation)
                             .allowsHitTesting(false)
@@ -282,14 +286,14 @@ private struct AppTile: View {
             Button {
                 if !model.editingOrder { model.launch(app) }
             } label: {
-                VStack(spacing: 10) {
+                VStack(spacing: 6) {
                     Image(nsImage: AppIcons.shared.image(for: app))
-                        .resizable().interpolation(.high).frame(width: 62, height: 62)
+                        .resizable().interpolation(.high).frame(width: 76, height: 76)
                         .shadow(color: .black.opacity(0.22), radius: 8, y: 5)
                         .opacity(model.dragSource == app.path ? 0.25 : app.isAvailable ? 1 : 0.4)
-                    Text(targeted && model.folderReady ? "松开以创建文件夹" : app.name).font(.system(size: 11, weight: .medium)).lineLimit(2)
-                        .multilineTextAlignment(.center).frame(height: 30, alignment: .top)
-                }.frame(maxWidth: .infinity).padding(.top, 15).padding(.horizontal, 4).padding(.bottom, 5)
+                    Text(targeted && model.folderReady ? "松开以创建文件夹" : app.name).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                        .multilineTextAlignment(.center).frame(height: 32, alignment: .top)
+                }.frame(maxWidth: .infinity).padding(.top, 8).padding(.horizontal, 4).padding(.bottom, 2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -336,11 +340,11 @@ private struct LauncherItemIcon: View {
             Image(nsImage: AppIcons.shared.image(for: app)).resizable().interpolation(.high)
         case .folder(let folder):
             ZStack {
-                RoundedRectangle(cornerRadius: 15).fill(.white.opacity(0.10))
-                RoundedRectangle(cornerRadius: 15).strokeBorder(accent.opacity(0.25))
-                LazyVGrid(columns: [GridItem(.fixed(22), spacing: 3), GridItem(.fixed(22), spacing: 3)], spacing: 3) {
+                RoundedRectangle(cornerRadius: 18).fill(.white.opacity(0.10))
+                RoundedRectangle(cornerRadius: 18).strokeBorder(accent.opacity(0.25))
+                LazyVGrid(columns: [GridItem(.fixed(27), spacing: 3), GridItem(.fixed(27), spacing: 3)], spacing: 3) {
                     ForEach(Array(model.folderApps(folder).prefix(4))) { app in
-                        Image(nsImage: AppIcons.shared.image(for: app)).resizable().frame(width: 22, height: 22)
+                        Image(nsImage: AppIcons.shared.image(for: app)).resizable().frame(width: 27, height: 27)
                     }
                 }
             }
@@ -357,16 +361,16 @@ private struct FolderTile: View {
     var body: some View {
         VStack(spacing: 0) {
             Button { if !model.editingOrder { model.openFolder(folder) } } label: {
-                VStack(spacing: 10) {
+                VStack(spacing: 6) {
                     LauncherItemIcon(item: .folder(folder), model: model)
-                        .frame(width: 62, height: 62)
+                        .frame(width: 76, height: 76)
                         .opacity(model.dragSource == folder.id ? 0.25 : 1)
                         .scaleEffect(targeted && model.folderReady ? 1.08 : 1)
                     Text(targeted && model.folderReady ? "松开以加入文件夹" : folder.name)
-                        .font(.system(size: 11, weight: .medium)).lineLimit(2)
-                        .multilineTextAlignment(.center).frame(height: 30, alignment: .top)
+                        .font(.system(size: 12, weight: .medium)).lineLimit(2)
+                        .multilineTextAlignment(.center).frame(height: 32, alignment: .top)
                 }
-                .frame(maxWidth: .infinity).padding(.top, 15).padding(.horizontal, 4).padding(.bottom, 5)
+                .frame(maxWidth: .infinity).padding(.top, 8).padding(.horizontal, 4).padding(.bottom, 2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain).accessibilityLabel("打开文件夹 \(folder.name)，\(folder.paths.count) 个应用")

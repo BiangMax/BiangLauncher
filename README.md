@@ -49,7 +49,8 @@ Swift Package 可直接用 Xcode 打开 `Package.swift`。直接运行 Swift Pac
 ## 技术与数据
 
 - SwiftUI 界面，AppKit 浮动面板、Dock/菜单栏入口、应用图标与启动。
-- 深色半透明背景、细描边和淡青色交互高亮；原生应用图标。
+- 深色半透明背景、细描边和淡青色交互高亮；参考系统启动台放大的原生应用图标，启动台和文件夹内均为每行 7 个。
+- 打开时淡入并轻微放大，收起时淡出并轻微缩小；开启系统“减少动态效果”后保留简短淡变。
 - 根据应用数量自动调整弹窗高度；拖动使用窗口内部手势，显示移动预览和目标高亮，在松手时更新顺序。
 - 配置以 JSON 原子写入，勾选、排序、自定义位置和快捷键跨重启保留。
 - 配置位置：`~/Library/Application Support/StudioBiangMax/BiangLauncher/preferences.json`。

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import QuartzCore
 import LauncherCore
 
 final class LauncherPanel: NSPanel {
@@ -16,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var keyMonitor: Any?
     private var observation: AnyCancellable?
+    private var wantsVisible = false
+    private var visibilityGeneration = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -53,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         buildStatusItem()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, panel.isVisible else { return event }
+            guard let self, wantsVisible else { return event }
             if model.recordingShortcut {
                 if event.keyCode == 53 { model.recordingShortcut = false }
                 else if event.keyCode == 51 && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty { model.setShortcut(nil) }
@@ -94,6 +97,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func show() {
         guard panel != nil else { return }
+        if wantsVisible {
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
+            model.focusRequest = UUID()
+            return
+        }
+        wantsVisible = true
+        visibilityGeneration += 1
+        let generation = visibilityGeneration
         if !panel.isVisible {
             model.query = ""
             model.recordingShortcut = false
@@ -104,26 +116,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let height = min(desiredHeight, area.height - 40)
                 panel.setFrame(NSRect(x: area.midX - width / 2, y: area.midY - height / 2 + min(35, (area.height - height) / 4), width: width, height: height), display: false)
             }
+            panel.alphaValue = 0
+            model.launcherVisible = false
         }
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         model.focusRequest = UUID()
+        // Let SwiftUI lay out the initial scale before starting the entrance.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.wantsVisible, self.visibilityGeneration == generation else { return }
+            self.model.launcherVisible = true
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.10 : 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                self.panel.animator().alphaValue = 1
+            }
+        }
     }
 
     private func hide() {
-        panel.orderOut(nil)
-        model.setManaging(false)
+        guard panel != nil, wantsVisible else { return }
+        wantsVisible = false
+        visibilityGeneration += 1
+        let generation = visibilityGeneration
+        model.clearDrag()
+        model.launcherVisible = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.10 : 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                // A quick reopen must not be hidden by an older completion.
+                guard let self, !self.wantsVisible, self.visibilityGeneration == generation else { return }
+                self.panel.orderOut(nil)
+                self.model.setManaging(false)
+            }
+        }
     }
 
     private var desiredHeight: CGFloat {
         if model.managing { return 620 }
         let count = model.launcherItems.count
-        let base: CGFloat = count == 0 ? 540 : min(620, 310 + CGFloat((count + 5) / 6) * 140)
+        let base: CGFloat = count == 0 ? 540 : min(620, 310 + CGFloat((count + 6) / 7) * 140)
         return min(700, base + (model.editingOrder ? 24 : 0) + (model.recordingShortcut ? 76 : 0))
     }
 
     private func resizePanel() {
-        guard let panel, panel.isVisible, let screen = panel.screen else { return }
+        guard let panel, wantsVisible, panel.isVisible, let screen = panel.screen else { return }
         let area = screen.visibleFrame
         let height = min(desiredHeight, area.height - 40)
         guard abs(panel.frame.height - height) > 1 else { return }
@@ -134,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggle() {
-        if panel.isVisible { hide() } else { show() }
+        if wantsVisible { hide() } else { show() }
     }
     @objc private func openLauncher() { model.setManaging(false); show() }
     @objc private func chooseApps() { model.setManaging(true); show() }
