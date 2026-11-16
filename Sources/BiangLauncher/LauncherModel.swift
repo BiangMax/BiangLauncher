@@ -17,7 +17,8 @@ final class LauncherModel: ObservableObject {
     @Published var dragSource: String?
     @Published var dragTarget: String?
     @Published var dragLocation = CGPoint.zero
-    var tileFrames: [String: CGRect] = [:]
+    private var tileFrames: [String: CGRect] = [:]
+    private var dragViewport = CGRect.zero
     var dismiss: (() -> Void)?
     var shortcutChanged: ((KeyboardShortcut?) -> Bool)?
     var present: (() -> Void)?
@@ -79,20 +80,32 @@ final class LauncherModel: ObservableObject {
         save()
     }
 
+    func updateTileFrames(_ frames: [String: CGRect], viewportSize: CGSize) {
+        tileFrames = frames
+        dragViewport = CGRect(origin: .zero, size: viewportSize)
+        // Scrolling changes the tiles under a stationary pointer too.
+        if dragSource != nil { dragTarget = dragHit(at: dragLocation) }
+    }
+
+    func dragHit(at location: CGPoint) -> String? {
+        guard dragViewport.contains(location) else { return nil }
+        return tileFrames.first { $0.value.contains(location) }?.key
+    }
+
     func updateDrag(source: String, location: CGPoint) {
         dragSource = source
         dragLocation = location
-        dragTarget = tileFrames.first { $0.value.contains(location) }?.key
+        dragTarget = dragHit(at: location)
     }
 
     func finishDrag(source: String, location: CGPoint) {
-        if let target = tileFrames.first(where: { $0.value.contains(location) })?.key {
+        if let target = dragHit(at: location) {
             move(source, to: target)
         }
         clearDrag()
     }
 
-    private func clearDrag() {
+    func clearDrag() {
         dragSource = nil
         dragTarget = nil
     }

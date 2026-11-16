@@ -169,14 +169,18 @@ struct LauncherView: View {
                 }.padding(.vertical, 2)
             }.scrollIndicators(.automatic)
         } else {
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), alignment: .leading, spacing: 16) {
-                    ForEach(model.visibleApps) { app in
-                        AppTile(app: app, model: model)
+            GeometryReader { viewport in
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), alignment: .leading, spacing: 16) {
+                        ForEach(model.visibleApps) { app in
+                            AppTile(app: app, model: model)
+                        }
                     }
+                    .padding(.vertical, 6)
                 }
-                .coordinateSpace(name: "appGrid")
-                .onPreferenceChange(TileFramesKey.self) { model.tileFrames = $0 }
+                .scrollIndicators(.automatic)
+                // Keep the preview and gesture outside the scrolling/lazy content.
+                // The source tile may leave the viewport during a long drag.
                 .overlay(alignment: .topLeading) {
                     if let source = model.dragSource, let app = model.apps.first(where: { $0.path == source }) {
                         Image(nsImage: AppIcons.shared.image(for: app))
@@ -186,8 +190,25 @@ struct LauncherView: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .padding(.vertical, 6)
-            }.scrollIndicators(.automatic)
+                .coordinateSpace(name: "appViewport")
+                .onPreferenceChange(TileFramesKey.self) {
+                    model.updateTileFrames($0, viewportSize: viewport.size)
+                }
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 6, coordinateSpace: .named("appViewport"))
+                        .onChanged { value in
+                            guard let source = model.dragSource ?? model.dragHit(at: value.startLocation) else { return }
+                            model.updateDrag(source: source, location: value.location)
+                        }
+                        .onEnded { value in
+                            guard let source = model.dragSource else { return }
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                model.finishDrag(source: source, location: value.location)
+                            }
+                        }
+                )
+                .onDisappear { model.clearDrag() }
+            }
         }
     }
 
@@ -276,19 +297,10 @@ private struct AppTile: View {
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(targeted ? accent.opacity(0.65) : .white.opacity(hovered ? 0.08 : 0), lineWidth: 1))
         .background {
             GeometryReader { geometry in
-                Color.clear.preference(key: TileFramesKey.self, value: [app.path: geometry.frame(in: .named("appGrid"))])
+                Color.clear.preference(key: TileFramesKey.self, value: [app.path: geometry.frame(in: .named("appViewport"))])
             }
         }
         .onHover { hovered = $0 }
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 6, coordinateSpace: .named("appGrid"))
-                .onChanged { value in model.updateDrag(source: app.path, location: value.location) }
-                .onEnded { value in
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        model.finishDrag(source: app.path, location: value.location)
-                    }
-                }
-        )
         .contextMenu {
             Button("打开") { model.launch(app) }.disabled(!app.isAvailable)
             Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([app.url]) }
