@@ -4,6 +4,8 @@
 
 开发者 **BiangMax** · **StudioBiangMax**
 
+当前版本：**v1.0.0** · [下载 Release](https://github.com/BiangMax/BiangLauncher/releases/latest)
+
 ## 使用
 
 1. 打开 `dist/BiangLauncher.app`。也可以把它拖到“应用程序”文件夹。
@@ -38,7 +40,7 @@ open dist/BiangLauncher.app
 产物：
 
 - `dist/BiangLauncher.app`：原生 arm64 应用。
-- `dist/BiangLauncher-0.1.0-macOS-arm64.zip`：应用压缩包。
+- `dist/BiangLauncher-1.0.0-macOS-arm64.zip`：应用压缩包。
 
 Swift Package 可直接用 Xcode 打开 `Package.swift`。直接运行 Swift Package 可调试界面；日常使用请运行打包后的 `.app`，以获得完整的应用身份、Dock 图标和启动行为。
 
@@ -78,3 +80,9 @@ Swift Package 可直接用 Xcode 打开 `Package.swift`。直接运行 Swift Pac
 原生 API 参考：[NSWorkspace](https://developer.apple.com/documentation/appkit/nsworkspace)、[SwiftUI 拖放](https://developer.apple.com/documentation/swiftui/drag-and-drop)。
 
 本机验证记录见 `docs/VERIFICATION.md`。
+
+## 版本规则
+
+版本格式为 `v主版本.次版本.补丁版本`。小改动和问题修复递增补丁号，例如 `v1.0.0` → `v1.0.1`；较大改动和功能更新递增次版本号并重置补丁号，例如 `v1.0.1` → `v1.1.0`。
+
+`Resources/Info.plist` 的 `CFBundleShortVersionString` 是应用版本的唯一来源，菜单与构建压缩包名称自动读取它。发布前同步 README 版本、验证记录与 Release 标签；提交信息遵守 Conventional Commits。
