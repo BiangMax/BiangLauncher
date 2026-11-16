@@ -4,11 +4,11 @@
 
 开发者 **BiangMax** · **StudioBiangMax**
 
-当前版本：**v1.0.0** · [下载 Release](https://github.com/BiangMax/BiangLauncher/releases/latest)
+当前版本：**v1.0.0** · [下载 DMG 安装包](https://github.com/BiangMax/BiangLauncher/releases/latest)
 
 ## 使用
 
-1. 打开 `dist/BiangLauncher.app`。也可以把它拖到“应用程序”文件夹。
+1. 下载 Release 中的 `.dmg`，双击打开，将左侧 BiangLauncher.app 拖入右侧 Applications（应用程序）。复制完成后推出磁盘映像，从“应用程序”打开。开发时也可运行 `dist/BiangLauncher.app`。
 2. 点击“选择应用”，搜索并勾选需要的应用，再点击“完成”。未勾选的应用不会出现在启动台或启动台搜索结果中。
 3. 点击图标启动应用。将一个图标拖到另一个图标上，松开后保存新顺序。点击“排序”还可用左右按钮调整位置。
 4. 按 Esc 或点击其他应用收起；点击 Dock 图标重新呼出。若要退出后仍保留 Dock 入口，右键 Dock 图标 → 选项 → 在程序坞中保留。
@@ -33,14 +33,20 @@
 
 ```sh
 bash scripts/build.sh
+bash scripts/package-dmg.sh
 bash scripts/test.sh
 open dist/BiangLauncher.app
 ```
 
+发布页只提供 DMG 安装包；以下构建产物中的 ZIP 和校验文件保留本地。
+
 产物：
 
 - `dist/BiangLauncher.app`：原生 arm64 应用。
+- `dist/BiangLauncher-1.0.0-macOS-arm64.dmg`：拖拽安装包，应用在左、Applications 在右。打开后将应用拖入 Applications 即可安装。
 - `dist/BiangLauncher-1.0.0-macOS-arm64.zip`：应用压缩包。
+
+`scripts/package-dmg.sh` 使用免费的 Python `ds-store` 工具生成固定的 Finder 布局，首次运行会将打包依赖安装到已忽略的 `.build/dmg-tools`；应用本身不依赖这些工具。
 
 Swift Package 可直接用 Xcode 打开 `Package.swift`。直接运行 Swift Package 可调试界面；日常使用请运行打包后的 `.app`，以获得完整的应用身份、Dock 图标和启动行为。
 
